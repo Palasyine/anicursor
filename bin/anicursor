@@ -1,0 +1,12 @@
+check_path() {
+    local target_dir="${1:-$HOME/.local/bin}"
+    # ":-" is conditional fallback operator, if there is no argument then use the directory behind it
+    case ":$PATH:" in
+        *":$target_dir:"*)
+            echo "$target_dir is already in PATH"
+            ;;
+        *)
+            export PATH="$target_dir:$PATH"
+            ;;
+    esac
+}   
