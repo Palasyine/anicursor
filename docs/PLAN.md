@@ -3,7 +3,7 @@ Supported environment (v1):
 Ubuntu 26.04 LTS, GNOME, Wayland, GTK 4, Python 3 from the system packages
 Per-user install only (no root needed)
 
-“Fully works” = on a fresh Ubuntu 26.04 machine, a user can:
+On a fresh Ubuntu 26.04 machine, a user can:
 
  Run anicursor and get a clear message listing any missing dependencies and the exact install commands
  Select a folder containing raw .ani/.cur files (Path A) and get a converted theme
