@@ -1,12 +1,47 @@
-check_path() {
-    local target_dir="${1:-$HOME/.local/bin}"
-    # ":-" is conditional fallback operator, if there is no argument then use the directory behind it
-    case ":$PATH:" in
-        *":$target_dir:"*)
-            echo "$target_dir is already in PATH"
-            ;;
-        *)
-            export PATH="$target_dir:$PATH"
-            ;;
-    esac
-}   
+#!/usr/bin/env bash
+set -euo pipefail
+notify_error() {
+    local message="${1:-anicursor could not start}"
+    # see if we can connect to terminal
+    if [[ -t 2 ]]; then
+        printf '%s\n' "$message" >&2
+        return 0
+    fi
+    # use zenity if a graphical session and zenity exist, otherwise print to stderr
+    if [[ -n "${WAYLAND_DISPLAY:-}" || -n "${DISPLAY:-}" ]] && command -v zenity >/dev/null 2>&1; then
+        if zenity --error --no-markup --text="$message" >/dev/null 2>&1; then
+            return 0
+        fi
+    fi
+    printf '%s\n' "$message" >&2
+}
+main(){
+    check_path() {
+        local target_dir="${1:-$HOME/.local/bin}"
+        case ":$PATH:" in
+            *":$target_dir:"*)
+                ;;
+            *)
+                export PATH="$target_dir:$PATH"
+                ;;
+        esac
+    }
+
+    check_path
+
+    LAUNCHER_PATH="$(readlink -f -- "${BASH_SOURCE[0]}")"
+    PROJ_DIR="$(dirname "$(dirname "$LAUNCHER_PATH")")"
+    checker="$PROJ_DIR/scripts/check-dependencies.sh"
+    # capture the checker's output; on failure call notify_error and exit 1
+    if ! output=$("$checker" 2>&1); then
+        notify_error "$output"
+        exit 1
+    fi
+    # Launch
+    export PYTHONPATH="$PROJ_DIR${PYTHONPATH:+:$PYTHONPATH}"
+    exec python3 -m anicursor "$@"
+}
+# check if the code is being executed directly or being sourced by another script
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

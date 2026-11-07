@@ -11,8 +11,7 @@ set -euo pipefail
 #   Layer 6  Exit code (0 = all present, 1 = something missing)
 #
 # NOTE: this script expects PATH to be prepared by bin/anicursor.
-# If you run it directly, win2xcur may be reported missing even when it is
-# installed in ~/.local/bin.
+
 
 declare -A APT_PACKAGE=(
     [python3]="python3"
@@ -58,14 +57,12 @@ check_deps() {
     local missing=() # stores missing dependencies for the report
 
     # --- Layer 1: command check ---
-    # Collect every missing command instead of stopping at the first one.
     for cmd in "${commands[@]}"; do
         if (! command -v "$cmd") > /dev/null 2>&1; then
             missing+=("$cmd")
         fi
     done
-    # "command -v "$cmd" > /dev/null 2>&1" runs at System Shell / OS Binaries
-    # > /dev/null 2>&1  this won't print normal and error output
+
 
     # --- Layer 3: GTK 4 Python bindings check ---
     if command -v python3 >/dev/null 2>&1; then
@@ -79,7 +76,6 @@ check_deps() {
     # --- Layer 4: library check ---
     # win2xcur depends on libmagickwand-dev, which is an APT package, not a command like python3, gsettings, etc.
     if (! dpkg -s libmagickwand-dev) >/dev/null 2>&1; then
-        # dpkg -s displays information about an installed Debian package
         missing+=("libmagickwand-dev")
     fi
 
