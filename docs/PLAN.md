@@ -1,9 +1,7 @@
 # Animated Cursor Setup (`anicursor`): Project Plan and Process Log
 
-> **How to use this file with any AI:** paste the whole file at the start of a new chat, then say which phase or task you are on. Update the checkboxes, the "Current status" section, the "Decision log" and the "Changelog" after each work session, so the next AI has accurate context.
-
-**Plan version:** 1.1 (architecture locked; progress updated)
-**Last updated:** 2026-11-06
+**Plan version:** 1.3
+**Last updated:** 2026-11-08
 
 ---
 
@@ -45,10 +43,10 @@ The display name (with spaces) appears only in the GUI title, README and `.deskt
 | Theme location | `~/.local/share/icons/THEME_NAME/` | Planned |
 
 **Rules that follow from this baseline**
-- Install PyGObject through **apt**, not pip, so it matches the system Python 3.14.
+- Install PyGObject through **apt**, not pip, so it matches the system Python 3.14. The same applies to `pytest` (`python3-pytest`).
 - `win2xcur` is installed with **pipx** (isolated environment). The tool calls it as a **command** via `subprocess`; it cannot be imported from system Python.
-- `~/.local/bin` (where pipx installs commands) may be missing from `PATH` in some contexts such as `.desktop` launches, so the **launcher** must add it.
-- Do not assume X11-era cursor methods behave identically on Wayland. Test `gsettings` on the real session early (Phase 2).
+- `~/.local/bin` (where pipx installs commands) may be missing from `PATH` in some contexts such as `.desktop` launches, so the **launcher** adds it.
+- Do not assume X11-era cursor methods behave identically on Wayland. Test `gsettings` on the real session at the start of Phase 2.
 
 ---
 
@@ -84,36 +82,52 @@ After the user selects a folder, check for `.ani` or `.cur` files.
 
 ### Launcher design (`bin/anicursor`)
 
-Order of the file (Bash reads top to bottom, so functions must be defined before they are called):
+**Done and tested.** Structure of the file (Bash reads top to bottom, so functions are defined before they are called):
 
 1. Shebang and `set -euo pipefail`
-2. Function definitions (`notify_error`, `check_path`)
-3. **Call** `check_path` (a function does nothing until called). It must stay quiet.
-4. Locate the project directory (use `readlink -f` so it still works through a symlink in `~/.local/bin`) and set `checker`
-5. Dependency check:
+2. Functions: `notify_error`, `check_path`
+3. `main()` containing the steps below, called at the bottom of the file only when the script is executed, not sourced:
+   ```bash
+   if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+       main "$@"
+   fi
+   ```
+   This allows `notify_error` to be tested by sourcing the file without launching anything.
+
+Steps inside `main`:
+
+1. Call `check_path` (quiet; adds `~/.local/bin` to `PATH` when missing).
+2. Locate the project: `readlink -f -- "${BASH_SOURCE[0]}"` so it works through a symlink in `~/.local/bin`; derive the project directory with properly quoted nested `dirname`; set `checker` to `scripts/check-dependencies.sh`.
+3. Dependency check:
    ```bash
    if ! output=$("$checker" 2>&1); then
        notify_error "$output"
        exit 1
    fi
    ```
-   The `if !` form is required, because under `set -e` a bare failing command would end the launcher before `notify_error` runs.
-6. `export PYTHONPATH="$PROJECT_DIR"`
-7. `exec python3 -m anicursor "$@"`
+   The `if !` form is required: under `set -e` a bare failing command would end the launcher before `notify_error` runs.
+4. `export PYTHONPATH="$project_dir${PYTHONPATH:+:$PYTHONPATH}"` (the colon is added only when `PYTHONPATH` is already set).
+5. `exec python3 -m anicursor "$@"`.
 
-`notify_error()` behavior: use `zenity --error --no-markup` when a graphical session (`WAYLAND_DISPLAY` or `DISPLAY`, read with `${VAR:-}`) and `zenity` exist; always also print to stderr when stderr is a terminal (`[ -t 2 ]`); append `|| true` so closing the dialog doesn't trip `set -e`; fall back to a generic message if the captured report is empty. It lives in the launcher for now; move it into a shared `scripts/lib.sh` only when `install.sh` needs it too.
+**`notify_error()` behavior**, tried in this order:
+1. stderr is a terminal (`[[ -t 2 ]]`): print the message to stderr and return.
+2. Graphical session (`WAYLAND_DISPLAY` or `DISPLAY`, read with `${VAR:-}`) and `zenity` is installed: show `zenity --error --no-markup`. If zenity fails or is closed with a non-zero status, fall through.
+3. Otherwise print the message to stderr.
+
+An empty message falls back to `anicursor could not start` via `${1:-...}`. It lives in the launcher; move it to a shared `scripts/lib.sh` only when `install.sh` needs it too.
 
 ### Dependency checker design (`scripts/check-dependencies.sh`)
 
-**Done and tested.** Summary of the final design:
+**Done and tested.**
 - **Report only, never installs.** Automatic installing is opt-in and belongs in `install.sh` (see decision log).
 - Global lookup table `APT_PACKAGE` maps an item name to its apt package(s): `python3`, `gsettings` (`libglib2.0-bin`), `gtk4` (`python3-gi gir1.2-gtk-4.0`), `libmagickwand-dev`.
 - `check_deps` owns local `commands` and `missing` arrays. `missing` holds the **table keys**, so there is no translation step.
 - `win2xcur` is a special case (installed with pipx, not apt). `pipx` is **not** a required dependency; it is only suggested when `win2xcur` is missing and pipx itself is absent.
 - `print_install` is a standalone function that takes the missing names as arguments (`print_install "${missing[@]}"`), reads only the global table, and prints the hints to stderr.
 - Silent on success, exit `0`. On failure: a `Missing: ...` line, the install hints, a count message, exit `1`.
-- Main call is wrapped in `if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then check_deps; fi`, so the file can be sourced to test functions without running the checks.
+- The main call is wrapped in `if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then check_deps; fi`, so the file can be sourced to test functions without running the checks.
 - Expects PATH to be prepared by the launcher. Running it directly may falsely report `win2xcur` missing.
+- `zenity` is not checked here (see decision log).
 
 ---
 
@@ -188,7 +202,7 @@ Goal: works on most computers with the current setup.
 - [x] Push the project to GitHub (remote `origin`)
 - [x] Default branch is `main` (renamed from `master`)
 
-### Phase 1: Bash and dependency check ⬅ CURRENT (branch `phase-1-bash`)
+### Phase 1: Bash and dependency check (branch `phase-1-bash`): implementation done, close-out pending
 Goal: `bin/anicursor` runs `check-dependencies.sh`, which either passes silently or reports exactly what is missing and how to install it.
 
 - [x] Practice Bash basics in a scratch file; run `shellcheck`
@@ -200,26 +214,36 @@ Goal: `bin/anicursor` runs `check-dependencies.sh`, which either passes silently
 - [x] Layer 6: exit `0` / `1`
 - [x] Checker passes all test cases (see test recipes below) and `shellcheck`
 - [x] Commit the checker
-- [ ] `notify_error()` in `bin/anicursor` (zenity with stderr fallback)
-- [ ] Launcher: call `check_path` quietly, locate project via `readlink -f`, run the checker with the `if ! output=$(...)` pattern, export `PYTHONPATH`, `exec python3 -m anicursor "$@"`
-- [ ] Placeholder in `anicursor/__main__.py`: `print("anicursor starting")` (optionally print `sys.argv` to test argument forwarding)
-- [ ] Launcher tests pass (below)
-- [ ] `shellcheck bin/anicursor scripts/*.sh` reports no warnings
-- [ ] Tick the boxes here, commit, merge `phase-1-bash` into `main`, then `git switch -c phase-2-python-core`
+- [x] `notify_error()` in `bin/anicursor` (terminal, then zenity, then stderr)
+- [x] Launcher: quiet `check_path`, locate project via `readlink -f`, checker run with the `if ! output=$(...)` pattern, `PYTHONPATH`, `exec python3 -m anicursor "$@"`
+- [x] Placeholder in `anicursor/__main__.py`
+- [x] Launcher tests pass (below)
+- [x] `shellcheck bin/anicursor scripts/*.sh` reports no warnings
+- [ ] Update this file, commit the launcher, push
+- [ ] Merge `phase-1-bash` into `main`, push, then `git switch -c phase-2-python-core`
+
+Placeholder content for `anicursor/__main__.py`:
+```python
+import sys
+print("anicursor starting", sys.argv[1:])
+```
 
 **Launcher tests**
 
 | Scenario | Command | Expected |
 |---|---|---|
-| All present | `bin/anicursor; echo "exit: $?"` | `anicursor starting`, `exit: 0` |
+| All present | `bin/anicursor; echo "exit: $?"` | `anicursor starting []`, `exit: 0` |
+| Arguments forwarded | `bin/anicursor --test` | `anicursor starting ['--test']` |
 | Called from elsewhere | `cd ~ && /path/to/anicursor/bin/anicursor` | Same output |
 | Through a symlink | `ln -s "$PWD/bin/anicursor" /tmp/anicursor-link && /tmp/anicursor-link; rm /tmp/anicursor-link` | Same output (tests `readlink -f`) |
-| Dependency missing, terminal | `( dpkg() { return 1; }; export -f dpkg; bin/anicursor; echo "exit: $?" )` | Report on the terminal, `exit: 1`, no "starting" |
-| Dependency missing, graphical | Same command with `2>/dev/null` | A Zenity dialog appears |
-| No graphical session | `env -u WAYLAND_DISPLAY -u DISPLAY bin/anicursor` with the fake `dpkg` | Falls back to stderr, no dialog |
-| Arguments forwarded | `bin/anicursor --test` | Python receives `--test` |
+| Dependency missing, terminal | `( dpkg() { return 1; }; export -f dpkg; bin/anicursor; echo "exit: $?" )` | Report printed, `exit: 1`, no "starting" |
+| Dependency missing, dialog | `( dpkg() { return 1; }; export -f dpkg; bin/anicursor 2>/dev/null; echo "exit: $?" )` | A zenity dialog with the report; after closing it, `exit: 1` |
+| No zenity | `d=$(mktemp -d); env PATH="$d" /usr/bin/bash -c 'source bin/anicursor; notify_error "Test message"' 2>/tmp/err.txt; cat /tmp/err.txt; rm -r "$d" /tmp/err.txt` | `Test message` in the file |
+| No graphical session | `env -u WAYLAND_DISPLAY -u DISPLAY bin/anicursor 2>/tmp/err.txt` with the fake `dpkg`, then `cat /tmp/err.txt` | The report in the file, no dialog |
 
-Note: the launcher always re-adds `~/.local/bin`, so a restricted `PATH` no longer simulates a missing `win2xcur` through the launcher. Use the checker test recipes for that.
+Notes:
+- The launcher always re-adds `~/.local/bin`, so a restricted `PATH` no longer simulates a missing `win2xcur` through the launcher. Use the checker test recipes for that.
+- Redirecting stderr (`2>/dev/null`) makes `[[ -t 2 ]]` false, which lets the dialog path be tested from a terminal.
 
 **Checker test recipes (none uninstall anything)**
 
@@ -236,7 +260,7 @@ Run from the project root. `PATH="$HOME/.local/bin:$PATH"` stands in for the lau
 | 7 | `pipx` and `win2xcur` both missing | Temp bin folder with symlinks to only `python3`, `gsettings`, `dpkg`; run with `env PATH="$d" /usr/bin/bash ...` | `pipx` in the apt line, then the pipx block with the `ensurepath` note |
 | 8 | Report only | `bash -c 'source scripts/check-dependencies.sh; print_install python3 gtk4 win2xcur'` | Full hints, no system checks |
 
-Always check the exit code as well as the output (`echo "exit: $?"`). Debug with `bash -x`; lint with `shellcheck`. Note that `bash -n` only checks syntax and misses runtime errors.
+Always check the exit code as well as the output (`echo "exit: $?"`). Debug with `bash -x`; lint with `shellcheck`. `bash -n` only checks syntax and misses runtime errors.
 
 **Command / module to package lookup**
 
@@ -247,18 +271,97 @@ Always check the exit code as well as the output (`echo "exit: $?"`). Debug with
 | GTK bindings | `python3-gi`, `gir1.2-gtk-4.0` |
 | ImageMagick library (needed by win2xcur) | `libmagickwand-dev` (a library: check with `dpkg -s`, not `command -v`) |
 | `gsettings` | `libglib2.0-bin` |
+| `zenity` (optional, error dialogs only) | `zenity` |
 | pipx | `pipx` (then `pipx ensurepath` and reopen the terminal) |
 
-### Phase 2: Python CLI core (Milestone M1)
-- [ ] Entry point (`__main__.py`, `cli.py`)
-- [ ] `detector.py`: Path A (raw `.ani`/`.cur`) vs Path B (converted or finished theme)
-- [ ] `converter.py`: run `win2xcur`, flatten nested output
-- [ ] `theme_builder.py`: create `~/.local/share/icons/THEME_NAME/cursors`, create `index.theme` only if missing, generate symlinks
-- [ ] `data/cursor_roles.json`: role to alias table
-- [ ] `settings.py`: **save the current theme first**, apply with `gsettings`, provide a restore command
+### Phase 2: Python CLI core (Milestone M1): NEXT
+Goal: one terminal command sets up the Herta pack, and one command undoes it.
+
+**Implementation order** (smallest and riskiest first, so the desktop side is proven early):
+
+| Step | Module | Why here |
+|---|---|---|
+| 0 | Manual `gsettings` check | Confirms the Wayland session applies cursor changes and shows the exact values to save |
+| 1 | `settings.py` | Small; answers the Wayland question before anything is built on it |
+| 2 | `detector.py` | Pure logic, no side effects, easy to test |
+| 3 | `converter.py` | Wraps `win2xcur` |
+| 4 | `data/cursor_roles.json`, `theme_builder.py` | Theme folder and symlinks |
+| 5 | `cli.py`, `__main__.py` | Glue |
+| 6 | Herta test on both paths | The milestone check |
+
+**Step 0: manual check**
+```bash
+gsettings get org.gnome.desktop.interface cursor-theme
+gsettings get org.gnome.desktop.interface cursor-size
+```
+Set a different theme (for example `Adwaita`), confirm the cursor changes, then set the original back. Record the result under "Open questions".
+
+**`settings.py`**
+- Read the current theme and size, save them, apply new values, restore.
+- Store the backup as JSON under the XDG state directory (`$XDG_STATE_HOME`, default `~/.local/state/anicursor/`) or the config directory.
+- Save the backup **only if none exists yet**, so running setup twice never overwrites the original theme.
+- Call `gsettings` with `subprocess.run([...], capture_output=True, text=True, check=True)` using a list, never a shell string. Output is quoted (`'Adwaita'`), so strip the quotes.
+- Give clear errors for a missing `gsettings` or a non-zero exit.
+
+**`detector.py`**
+- One side-effect-free function returning a small result object (`dataclass` or `NamedTuple`): kind (`RAW`, `LOOSE_XCURSOR`, `FINISHED_THEME`, `EMPTY`) plus the files found.
+- Match extensions case-insensitively (`.ANI`, `.Cur`).
+- Decide how deep to search; packs are often nested one folder down.
+- Finished theme: `cursors/` folder plus `index.theme`.
+- Loose Xcursor files: check the first four bytes for the `Xcur` magic, not the filename.
+- Empty or unreadable folders return a clear result, not an exception.
+
+**`converter.py`**
+- Find the tool with `shutil.which("win2xcur")` and handle `None` for direct runs.
+- Pass files as separate arguments (no shell) so names with spaces are safe.
+- Inspect what `win2xcur` actually produces on this machine before writing the flattening code.
+- Collect per-file failures and report them at the end, so one corrupt file does not stop the rest.
+- Running twice must be safe; decide what happens when output files already exist.
+
+**`data/cursor_roles.json` and `theme_builder.py`**
+- `cursor_roles.json`: a role-to-aliases table built from the alias list in section 8.
+- `theme_builder.py`: create the theme folder, write `index.theme` only if missing, create a symlink per alias for each mapped role.
+- For this phase the mapping is a plain dict from role to filename (Phase 3 adds auto-suggest).
+- Use relative symlink targets so the theme survives being moved.
+- Replace existing links safely (`unlink(missing_ok=True)`), the equivalent of `ln -sf`.
+- Warn and skip when a mapped file does not exist, instead of creating a dangling link.
+- Validate the theme name: not empty, no slashes, no leading dot.
+
+**`cli.py`**
+- `argparse` with subcommands `setup`, `restore`, and optionally `detect` as a development aid.
+- Print "conversion skipped" for Path B.
+- For now `setup` takes its mapping from a JSON file argument; Phase 3 replaces this with auto-suggest.
+
+**Tests** (`pytest` from apt, using `tmp_path`)
+
+| Test | Checks |
+|---|---|
+| Empty folder | `EMPTY`, no crash |
+| `a.ani` and `b.CUR` | `RAW`, both found, case-insensitive |
+| Fake file starting with `Xcur` | `LOOSE_XCURSOR` |
+| `cursors/` plus `index.theme` | `FINISHED_THEME` |
+| Names with spaces | Handled everywhere |
+| Settings saved twice | Backup keeps the original value |
+
+Keep real `gsettings` calls for manual checks; test save/restore logic against a temporary folder.
+
+**Checklist**
+- [ ] Manual `gsettings` check, result noted
+- [ ] `settings.py`: save once, apply, restore (with tests)
+- [ ] `detector.py` and its tests
+- [ ] `converter.py`
+- [ ] `data/cursor_roles.json`
+- [ ] `theme_builder.py` with symlinks and `index.theme`
+- [ ] `cli.py` with `setup` and `restore`
 - [ ] Clear messages, including "conversion skipped" for Path B
-- [ ] Test the Herta pack on both paths
-- [ ] Verify `gsettings` works on the real Wayland session
+- [ ] Herta pack works on both paths
+- [ ] Commit per module
+
+**M1 check** (Herta pack in a local, Git-ignored `samples/` folder):
+1. `anicursor setup samples/<pack> --name HertaCursor` (Path A)
+2. Confirm the cursor changes system-wide and in a freshly opened app.
+3. Run setup on `~/.local/share/icons/HertaCursor/cursors` (Path B) and confirm "conversion skipped".
+4. `anicursor restore` brings back the original theme.
 
 **M1 done when:** one terminal command sets up Herta and one command undoes it.
 
@@ -292,7 +395,7 @@ Always check the exit code as well as the output (`echo "exit: $?"`). Debug with
 Preview options, easiest first: (1) convert to GIF or PNG frames with ImageMagick or `xcur2png`; (2) read the Xcursor file directly in Python; (3) apply temporarily and let the user hover.
 
 ### Phase 7: Packaging and polish (Milestone M3)
-- [ ] `install.sh` and `uninstall.sh` (symlink `bin/anicursor` into `~/.local/bin`; the launcher must resolve symlinks)
+- [ ] `install.sh` and `uninstall.sh` (symlink `bin/anicursor` into `~/.local/bin`; the launcher already resolves symlinks)
 - [ ] Optional opt-in `--install-deps` in `install.sh` (see rules in the decision log)
 - [ ] `.desktop` entry
 - [ ] Edge cases (empty folder, bad names, conversion failures, missing permissions)
@@ -344,14 +447,15 @@ Preview options, easiest first: (1) convert to GIF or PNG frames with ImageMagic
 - **Zenity limits:** fine for simple dialogs, but it cannot show animated previews or a custom mapping screen. That is why the GUI uses Python + GTK 4.
 - **PYTHONPATH:** `python3 -m anicursor` only finds the package from the project root or with `PYTHONPATH` set. The launcher exports it for now; Phase 7 packaging replaces this.
 
-### Bash lessons learned (mistakes made so far, worth remembering)
+### Bash gotchas encountered
 
 | Gotcha | Rule |
 |---|---|
 | `local` outside a function | Only valid inside functions; at the top level it errors and `set -e` ends the script |
 | Passing an array | `"${arr[@]}"` expands to one argument per element (and nothing if empty); `"$arr"` is only the first element and fails under `set -u` when empty |
-| Array lookup | `${ARR[$key]}` needs braces; `$ARR[$key]` is wrong. Use `${ARR[$key]:-}` for keys that may be absent under `set -u` |
+| Array lookup | `${ARR[$key]}` needs braces; `$ARR[$key]` and `"$BASH_SOURCE{0}"` are wrong. Use `${ARR[$key]:-}` for keys that may be absent under `set -u` |
 | Assigning | `var=value`, never `$var=value` |
+| Variable names | Case-sensitive; an undefined name stops the script under `set -u` |
 | Spacing in tests | `[[ "$a" == "b" ]]` needs spaces around `==`; without them the test is a non-empty string and always true |
 | Counting an array | `(( ${#arr[@]} > 0 ))`; `( "${arr[@]}" > 0 )` runs the array as a command and creates a file named `0` |
 | Negation | `if ! cmd >/dev/null 2>&1; then` is simpler than `(! cmd) ...` and avoids a subshell. Silence stdout **and** stderr together |
@@ -359,8 +463,9 @@ Preview options, easiest first: (1) convert to GIF or PNG frames with ImageMagic
 | Functions are not calls | Defining `check_path` does nothing until a line calls it |
 | Comment-only function body | A function with only comments is a syntax error; put `:` or `return 0` in it temporarily |
 | Dynamic scope | A called function can see its caller's `local` variables; avoid relying on it, pass data as arguments |
+| Nested command substitution | Quote each level: `"$(dirname "$(dirname "$path")")"` |
 | `export` | Changes affect only the script process and its children; the launcher's `export PATH` is inherited by the checker and by Python |
-| Sourcing a script | `source` runs `set -euo pipefail` in your interactive shell; wrap tests in `bash -c '...'`. Use the `BASH_SOURCE` guard so sourcing loads functions without running them |
+| Sourcing a script | `source` runs `set -euo pipefail` in the interactive shell; wrap tests in `bash -c '...'`. Use the `BASH_SOURCE` guard so sourcing loads functions without running them |
 | Exported functions | `export -f name` makes a function visible to child Bash processes (used to fake `dpkg` and `python3` in tests) |
 | Stray files | Pasting terminal output into the shell can create junk files (`master`, `phase-1-bash`, `0`). Paste only commands |
 
@@ -372,7 +477,7 @@ Variables, quoting, functions, `if` / `case`, arrays and associative arrays, `fo
 
 ## 10. Python / GTK concepts to learn
 
-`pathlib`, `subprocess`, `json`, dicts, GTK 4 windows and signals, file chooser dialogs, list widgets, timers for animation, pixbuf / texture display, threads (background conversion).
+`pathlib`, `subprocess`, `json`, `dataclasses`, `argparse`, `shutil.which`, XDG base directories, `pytest` and `tmp_path`, GTK 4 windows and signals, file chooser dialogs, list widgets, timers for animation, pixbuf / texture display, threads (background conversion).
 
 ---
 
@@ -399,18 +504,28 @@ git log --oneline --all --graph
 
 ## 12. Current status
 
-- **Done:** Phase 0 (names, folders, Git, environment verified, pushed to GitHub, branch renamed to `main`). The dependency checker (Phase 1 Layers 1 to 6) is finished, tested and committed.
-- **Now:** Phase 1, writing the launcher: `notify_error()`, then the locate and check steps, then the launch step.
-- **Where the launcher stands:** the skeleton exists with `notify_error` as an empty stub and `check_path` written but never called (and it still prints "already in PATH", which must be removed). The locate, check and launch sections are still TODO.
-- **Next action:** fill in `notify_error()` and test it alone, call `check_path` quietly, add the locate step, then the `if ! output=$(...)` block, then the launch. Review each piece before moving on.
+| Area | State |
+|---|---|
+| Phase 0 (setup, Git, GitHub, environment) | Done |
+| Phase 1: dependency checker | Done, tested (8 cases), `shellcheck` clean, committed |
+| Phase 1: launcher and `__main__.py` placeholder | Done; all launcher tests and `shellcheck` pass |
+| Phase 1: close-out (update this file, commit launcher, push, merge into `main`) | Pending |
+| Phase 2 (Python CLI core) | Not started; first action is the manual `gsettings` check |
+| Phases 3 to 7 (mapping, GUI, preview, packaging) | Not started |
+
 - **Branch:** `phase-1-bash`
+- **Next actions:**
+  1. Commit the launcher, push, merge `phase-1-bash` into `main`, then `git switch -c phase-2-python-core`.
+  2. Run the manual `gsettings` check and record the result.
+  3. Write `settings.py`.
 
-## 13. Working agreement with the AI helper
+## 13. Working agreement
 
-- Explain the concept, give a skeleton and a list of things to look up; the user writes the code.
-- Review pasted code by pointing out bugs and unclear spots, ordered by severity, without rewriting it (a comment-only cleanup copy is fine if asked).
-- Give test commands that do not uninstall anything.
-- Do not write the whole product at once.
+- The helper explains the concept, gives a skeleton and a list of things to look up; the user writes the code.
+- Pasted code is reviewed by pointing out bugs and unclear spots, ordered by severity, without rewriting it.
+- Test commands must not uninstall anything.
+- The product is built in small steps, not all at once.
+- A checkbox is ticked only after its test passes. Checkboxes, "Current status" and the changelog are updated together at the end of each session.
 
 ## 14. Decision log
 
@@ -419,7 +534,7 @@ git log --oneline --all --graph
 | Hybrid Bash + Python GTK | Lightweight yet convenient; Zenity alone cannot do preview or mapping UI |
 | Python is the core; Bash limited to launcher and system scripts | Better for JSON, mapping, file parsing and GUI; Bash still gets real learning tasks |
 | GTK 4 | Current toolkit on Ubuntu 26.04 / GNOME 50 |
-| PyGObject via apt, `win2xcur` via pipx | Matches system Python 3.14; pipx keeps conversion isolated |
+| PyGObject and `pytest` via apt, `win2xcur` via pipx | Matches system Python 3.14; pipx keeps conversion isolated |
 | `gui/` inside the Python package | Cleaner imports |
 | Per-user install, theme in `~/.local/share/icons/` | No root needed; modern path |
 | System-wide install is opt-in only | Avoid unnecessary `sudo` |
@@ -429,21 +544,28 @@ git log --oneline --all --graph
 | The checker only reports; it never installs | Needs sudo, no terminal on `.desktop` launches, hard to handle failures. Automatic install is opt-in in `install.sh` (confirm first, group apt vs pipx, check each exit code, stop on required failures, re-run the checker to verify, never retry silently) |
 | `pipx` is not a required dependency | It is only needed to install `win2xcur`, not to run it |
 | Lookup table + `missing` holds table keys | Removes translation code and key-mismatch bugs |
+| `zenity` is not a checked dependency | `notify_error()` detects it at runtime: terminal gets stderr text, a graphical session with zenity gets a dialog, anything else falls back to stderr. `notify-send` or a log file could be added later |
 | `notify_error()` lives in the launcher | The launcher decides terminal vs dialog; move to `scripts/lib.sh` only when a second script needs it |
+| Launcher logic wrapped in `main` with a `BASH_SOURCE` guard | Allows testing `notify_error` by sourcing without launching |
+| Phase 2 starts with `settings.py` after a manual `gsettings` check | Smallest module and the biggest unknown (Wayland); proves the desktop side before building on it |
+| Settings backup is saved only once | Running setup twice must not overwrite the original theme |
+| Detector reads the `Xcur` magic bytes | More reliable than guessing from filenames |
 | Stay in Python (no C++ rewrite) | Time goes to `win2xcur`, disk and user waiting, not the language. Measure first (`time`, `python3 -X importtime`, `cProfile`) and fix with lazy imports, background threads, caching |
 | Keep modules swappable | A future native `.ani` parser could replace `win2xcur`, `pipx` and `libmagickwand-dev` |
-|`zenity` is not a checked dependency | notify_error() detects it at runtime and falls back to notify-send, then stderr and a log file. There’s also nothing to change in the checker or its tests.|
+
 ## 15. Open questions
 
+- Does `gsettings` apply correctly on this Wayland session? (Manual check at the start of Phase 2.)
+- What exactly does `win2xcur` output on this machine (nested folders, file names)?
 - Which preview approach to use first (PNG frames vs reading Xcursor directly)?
-- Does `gsettings` apply correctly on this Wayland session? (Verify early in Phase 2.)
-- Should the happy path get a `--verbose` flag (a good `getopts` exercise)?
+- Should the happy path get a `--verbose` flag (a `getopts` exercise)?
 
 ## 16. Future ideas
 
 - Native `.ani` / `.cur` parser to remove the `win2xcur`, pipx and ImageMagick dependencies (language decided after profiling, likely still Python)
 - Packaging as a `.deb`, Flatpak or Snap
 - Support for Ubuntu 26.10, other flavors and other distros
+- `notify-send` fallback and a log file for launcher errors
 - Opt-in `--install-deps`
 
 ## 17. Changelog
@@ -452,7 +574,9 @@ git log --oneline --all --graph
 |---|---|
 | 2026-11-03 | Plan v1.0 locked. Phase 0 completed. Phase 1 started. |
 | 2026-11-04 | Project pushed to GitHub. Commit message typo fixed with `--amend` and `--force-with-lease`. Default branch renamed from `master` to `main`; stray junk files removed. |
-| 2026-11-06 | Dependency checker finished and tested (lookup table, `print_install`, `BASH_SOURCE` guard, all 8 test cases pass). PATH fix moved to the launcher. Launcher design settled; `notify_error()` and launcher in progress. C++ rewrite considered and rejected for now. |
+| 2026-11-06 | Dependency checker finished and tested. PATH fix moved to the launcher. C++ rewrite considered and rejected for now. |
+| 2026-11-07 | Plan v1.2: status section aligned with checkboxes; `zenity` decision-log row repaired. |
+| 2026-11-08 | Plan v1.3. Launcher and placeholder finished; launcher tests and `shellcheck` pass. Launcher design section updated to the final structure (`main`, `BASH_SOURCE` guard, `notify_error` order, `PYTHONPATH` append). Phase 2 plan detailed. |
 
 ---
 
