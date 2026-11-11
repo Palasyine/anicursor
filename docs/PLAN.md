@@ -219,8 +219,8 @@ Goal: `bin/anicursor` runs `check-dependencies.sh`, which either passes silently
 - [x] Placeholder in `anicursor/__main__.py`
 - [x] Launcher tests pass (below)
 - [x] `shellcheck bin/anicursor scripts/*.sh` reports no warnings
-- [ ] Update this file, commit the launcher, push
-- [ ] Merge `phase-1-bash` into `main`, push, then `git switch -c phase-2-python-core`
+- [x] Update this file, commit the launcher, push
+- [x] Merge `phase-1-bash` into `main`, push, then `git switch -c phase-2-python-core`
 
 Placeholder content for `anicursor/__main__.py`:
 ```python
@@ -346,7 +346,7 @@ Set a different theme (for example `Adwaita`), confirm the cursor changes, then 
 Keep real `gsettings` calls for manual checks; test save/restore logic against a temporary folder.
 
 **Checklist**
-- [ ] Manual `gsettings` check, result noted
+- [x] Manual `gsettings` check, result noted
 - [ ] `settings.py`: save once, apply, restore (with tests)
 - [ ] `detector.py` and its tests
 - [ ] `converter.py`
@@ -555,7 +555,7 @@ git log --oneline --all --graph
 
 ## 15. Open questions
 
-- Does `gsettings` apply correctly on this Wayland session? (Manual check at the start of Phase 2.)
+- Does `gsettings` apply correctly on this Wayland session? Passed.
 - What exactly does `win2xcur` output on this machine (nested folders, file names)?
 - Which preview approach to use first (PNG frames vs reading Xcursor directly)?
 - Should the happy path get a `--verbose` flag (a `getopts` exercise)?
